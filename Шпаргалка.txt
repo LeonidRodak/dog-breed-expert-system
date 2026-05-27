@@ -1,6 +1,9 @@
 python -m venv venv
-source venv/cripts/activate
+source venv/Scripts/activate
 
+pip install streamlit pandas
+
+python database/init_db.py
 python database/populate_data.py
 
 

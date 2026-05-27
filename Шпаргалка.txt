@@ -1,0 +1,7 @@
+python -m venv venv
+source venv/cripts/activate
+
+python database/populate_data.py
+
+
+streamlit run app.py

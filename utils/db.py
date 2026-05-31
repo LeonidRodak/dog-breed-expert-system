@@ -1,5 +1,6 @@
 import sqlite3
 import pandas as pd
+import json
 
 def get_db_connection():
     """Подключение к базе знаний"""
@@ -20,11 +21,14 @@ def get_all_breeds():
     return df
 
 def get_breed_values(breed_name: str):
-    """Показывает значения свойств ТОЛЬКО для тех, что включены в 'Описание свойств вида'."""
+    """Показывает ТОЛЬКО активные свойства (фильтрация в Python — обходим баг pandas)"""
+    print(f"🔍 get_breed_values для породы: {breed_name}")
+    
     conn = get_db_connection()
     query = """
     SELECT 
         с.название as свойство,
+        COALESCE(о.активно, 1) as активно,
         CASE 
             WHEN вм.мин_значение IS NOT NULL THEN вм.мин_значение || ' - ' || вм.макс_значение
             WHEN цм.мин_значение IS NOT NULL THEN цм.мин_значение || ' - ' || цм.макс_значение
@@ -38,11 +42,15 @@ def get_breed_values(breed_name: str):
     LEFT JOIN категориальное_значение_для_породы кз ON кз.описание_id = о.идентификатор
     LEFT JOIN категориальные_значения кзн ON кзн.идентификатор = кз.категориальное_значение_id
     WHERE п.название = ?
-    GROUP BY с.название, вм.мин_значение, цм.мин_значение
+    GROUP BY с.название, вм.мин_значение, цм.мин_значение, о.активно
     ORDER BY с.название
     """
     df = pd.read_sql_query(query, conn, params=(breed_name,))
     conn.close()
+    
+    # Фильтруем активные свойства уже в Python (это обходит проблему SQLite + pandas)
+    if 'активно' in df.columns:
+        df = df[df['активно'] == 1].copy()
     
     def clean_value(val):
         if pd.isna(val):
@@ -50,7 +58,10 @@ def get_breed_values(breed_name: str):
         items = str(val).split(', ')
         return ', '.join(sorted(set(items)))
     
-    df['значение'] = df['значение'].apply(clean_value)
+    if not df.empty:
+        df['значение'] = df['значение'].apply(clean_value)
+        df = df.drop(columns=['активно'], errors='ignore')
+    
     return df
 
 
@@ -185,11 +196,12 @@ def reset_properties_to_default():
 
 
 def get_properties_for_breed(breed_name: str):
-    """Возвращает список свойств и какие из них назначены породе"""
+    """Возвращает свойства + их активность для чекбоксов"""
     conn = get_db_connection()
     query = """
-    SELECT с.название, 
-           CASE WHEN о.порода_id IS NOT NULL THEN 1 ELSE 0 END as selected
+    SELECT 
+        с.название, 
+        COALESCE(о.активно, 1) as активно
     FROM свойство с
     LEFT JOIN описание_свойств_породы о 
         ON о.свойство_id = с.идентификатор 
@@ -198,11 +210,13 @@ def get_properties_for_breed(breed_name: str):
     """
     df = pd.read_sql_query(query, conn, params=(breed_name,))
     conn.close()
-    return df
+    df['selected'] = df['активно'].astype(int)
+    return df.drop(columns=['активно'], errors='ignore')
+
 
 def update_breed_properties(breed_name: str, selected_properties: list):
-    """Управляет видимостью свойств для конкретной породы.
-    Никогда не перезаписывает значения пород (обрезанные значения сохраняются)."""
+    """Управляет видимостью свойств через флаг 'активно'.
+    Теперь вместо DELETE/INSERT просто меняем флаг — значения никогда не теряются."""
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -214,10 +228,6 @@ def update_breed_properties(breed_name: str, selected_properties: list):
             return False
         breed_id = breed_id_row[0]
 
-        # Текущие активные свойства
-        cur.execute("SELECT свойство_id FROM описание_свойств_породы WHERE порода_id = ?", (breed_id,))
-        current_ids = {row[0] for row in cur.fetchall()}
-
         # ID выбранных свойств
         selected_ids = set()
         for name in selected_properties:
@@ -226,18 +236,30 @@ def update_breed_properties(breed_name: str, selected_properties: list):
             if row:
                 selected_ids.add(row[0])
 
-        # Удаляем отключённые свойства (только связь, значения остаются)
-        for pid in current_ids - selected_ids:
-            cur.execute("DELETE FROM описание_свойств_породы WHERE порода_id = ? AND свойство_id = ?", 
-                        (breed_id, pid))
+        # 1. Все свойства, которые должны быть активны — ставим активно = 1 (или создаём запись)
+        for pid in selected_ids:
+            cur.execute("""
+                INSERT OR IGNORE INTO описание_свойств_породы 
+                (порода_id, свойство_id, активно) 
+                VALUES (?, ?, 1)
+            """, (breed_id, pid))
+            
+            cur.execute("""
+                UPDATE описание_свойств_породы 
+                SET активно = 1 
+                WHERE порода_id = ? AND свойство_id = ?
+            """, (breed_id, pid))
 
-        # Добавляем включённые свойства
-        for pid in selected_ids - current_ids:
-            cur.execute("INSERT OR IGNORE INTO описание_свойств_породы (порода_id, свойство_id) VALUES (?, ?)", 
-                        (breed_id, pid))
+        # 2. Свойства, которые сняты — ставим активно = 0
+        cur.execute("""
+            UPDATE описание_свойств_породы 
+            SET активно = 0 
+            WHERE порода_id = ? 
+              AND свойство_id NOT IN (SELECT value FROM json_each(?))
+        """, (breed_id, json.dumps(list(selected_ids))))
 
         conn.commit()
-        print(f"✅ update_breed_properties: обновлено описание свойств для '{breed_name}'")
+        print(f"update_breed_properties: обновлена видимость свойств для '{breed_name}'")
         return True
     except Exception as e:
         print(f"Ошибка в update_breed_properties: {e}")
@@ -399,21 +421,19 @@ def delete_categorical_value(prop_name: str, value: str):
 
 
 def get_breed_specific_value(breed_name: str, prop_name: str):
-    """Возвращает значение свойства для породы.
-    Ищет значение напрямую из таблиц значений (независимо от того, включено свойство в 'Описание свойств вида' или нет).
-    Это гарантирует сохранение обрезанных значений."""
+    """Возвращает значение свойства (используется в редакторе значений).
+    Теперь проверяем активно = 1, но если нужно редактировать даже скрытые свойства — 
+    можно убрать условие о.активно = 1 (оставил как есть, чтобы соответствовало просмотру)."""
     conn = get_db_connection()
     cur = conn.cursor()
     
     try:
-        # Получаем ID породы
         cur.execute("SELECT идентификатор FROM породa_собаки WHERE название = ?", (breed_name,))
         breed_id_row = cur.fetchone()
         if not breed_id_row:
             return None
         breed_id = breed_id_row[0]
 
-        # Получаем ID свойства
         cur.execute("SELECT идентификатор FROM свойство WHERE название = ?", (prop_name,))
         prop_id_row = cur.fetchone()
         if not prop_id_row:
@@ -424,8 +444,6 @@ def get_breed_specific_value(breed_name: str, prop_name: str):
 
         if prop_type in ["вещественное", "целое"]:
             table = "вещественное_значение_для_породы" if prop_type == "вещественное" else "целое_значение_для_породы"
-            
-            # Ищем значение напрямую по breed_id и prop_id (без JOIN на описание_свойств_породы)
             cur.execute(f"""
                 SELECT мин_значение as min, макс_значение as max
                 FROM {table} v
@@ -435,6 +453,7 @@ def get_breed_specific_value(breed_name: str, prop_name: str):
                     WHERE o.идентификатор = v.описание_id 
                       AND o.порода_id = ? 
                       AND o.свойство_id = ?
+                      AND o.активно = 1
                 )
             """, (breed_id, prop_id))
             row = cur.fetchone()
@@ -448,7 +467,9 @@ def get_breed_specific_value(breed_name: str, prop_name: str):
                 FROM категориальное_значение_для_породы кз
                 JOIN описание_свойств_породы o ON кз.описание_id = o.идентификатор
                 JOIN категориальные_значения кзн ON кз.категориальное_значение_id = кзн.идентификатор
-                WHERE o.порода_id = ? AND o.свойство_id = ?
+                WHERE o.порода_id = ? 
+                  AND o.свойство_id = ?
+                  AND o.активно = 1
                 ORDER BY кзн.значение
             """, (breed_id, prop_id))
             values = [row[0] for row in cur.fetchall()]
@@ -718,5 +739,3 @@ def update_breed_properties_global():
     return True
 
 print("✅ Модуль db.py готов")
-
-

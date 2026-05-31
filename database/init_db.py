@@ -59,6 +59,7 @@ def init_database():
         идентификатор INTEGER PRIMARY KEY AUTOINCREMENT,
         порода_id INTEGER NOT NULL,
         свойство_id INTEGER NOT NULL,
+        активно BOOLEAN DEFAULT 1 NOT NULL CHECK (активно IN (0, 1)),
         FOREIGN KEY (порода_id) REFERENCES породa_собаки(идентификатор),
         FOREIGN KEY (свойство_id) REFERENCES свойство(идентификатор),
         UNIQUE(порода_id, свойство_id)
@@ -84,7 +85,7 @@ def init_database():
         категориальное_значение_id INTEGER NOT NULL,
         FOREIGN KEY (описание_id) REFERENCES описание_свойств_породы(идентификатор),
         FOREIGN KEY (категориальное_значение_id) REFERENCES категориальные_значения(идентификатор)
-    );
+    ); 
     ''')
 
     conn.commit()

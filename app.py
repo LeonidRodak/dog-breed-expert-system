@@ -91,7 +91,11 @@ if role == "Эксперт":
         col_del, col_reset = st.columns(2)
         
         with col_del:
+<<<<<<< HEAD
             if st.button(" Удалить выбранные породы", type="secondary", width="stretch"):
+=======
+            if st.button(" Удалить выбранные породы", type="secondary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                 if breeds_to_delete:
                     deleted = 0
                     for name in breeds_to_delete:
@@ -104,7 +108,11 @@ if role == "Эксперт":
                     st.warning(" Выберите хотя бы одну породу для удаления")
         
         with col_reset:
+<<<<<<< HEAD
             if st.button(" Восстановить исходные 20 пород", type="secondary", width="stretch"):
+=======
+            if st.button(" Восстановить исходные 20 пород", type="secondary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                 if reset_breeds_to_default_safe():
                     st.success(" Исходные породы восстановлены (добавлены недостающие)")
                     st.rerun()
@@ -147,7 +155,11 @@ if role == "Эксперт":
         col_del, col_reset = st.columns(2)
         
         with col_del:
+<<<<<<< HEAD
             if st.button(" 🗑 Удалить выбранные свойства", type="secondary", width="stretch"):
+=======
+            if st.button(" 🗑 Удалить выбранные свойства", type="secondary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                 if properties_to_delete:
                     deleted = 0
                     for name in properties_to_delete:
@@ -162,7 +174,11 @@ if role == "Эксперт":
                     st.warning("Выберите хотя бы одно свойство для удаления")
         
         with col_reset:
+<<<<<<< HEAD
             if st.button(" Восстановить исходные 6 свойств", type="secondary", width="stretch"):
+=======
+            if st.button(" Восстановить исходные 6 свойств", type="secondary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                 if reset_properties_to_default():
                     st.success(" Исходные свойства восстановлены!")
                     st.rerun()
@@ -175,7 +191,11 @@ if role == "Эксперт":
         # === КНОПКА ПОЛНОГО СБРОСА (независимая от других условий) ===
         if st.button(" Восстановить исходные возможные значения", 
                     type="secondary", 
+<<<<<<< HEAD
                     width="stretch"):
+=======
+                    use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
             st.session_state.show_reset_confirm = True
             st.rerun()
 
@@ -185,7 +205,11 @@ if role == "Эксперт":
             
             col_yes, col_no = st.columns(2)
             with col_yes:
+<<<<<<< HEAD
                 if st.button("✅ Да, сбросить всё", type="primary", width="stretch"):
+=======
+                if st.button("✅ Да, сбросить всё", type="primary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     print("=== КНОПКА 'Да, сбросить всё' НАЖАТА ===")
                     success = reset_possible_values_to_default()
                     print(f"Результат функции reset_possible_values_to_default: {success}")
@@ -196,7 +220,11 @@ if role == "Эксперт":
                     else:
                         st.error("Не удалось выполнить сброс (смотри терминал)")
             with col_no:
+<<<<<<< HEAD
                 if st.button("❌ Отмена", width="stretch"):
+=======
+                if st.button("❌ Отмена", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     st.session_state.show_reset_confirm = False
                     st.rerun()
                     
@@ -241,7 +269,11 @@ if role == "Эксперт":
                     )
                 
                 # Кнопка сохранения диапазона
+<<<<<<< HEAD
                 if st.button("💾 Сохранить диапазон", type="primary", width="stretch"):
+=======
+                if st.button("💾 Сохранить диапазон", type="primary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     if min_val > max_val:
                         st.error("Минимальное значение не может быть больше максимального!")
                     else:
@@ -269,7 +301,11 @@ if role == "Эксперт":
                 
                 col_add, col_del = st.columns(2)
                 with col_add:
+<<<<<<< HEAD
                     if st.button("➕ Добавить значение", width="stretch"):
+=======
+                    if st.button("➕ Добавить значение", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                         if new_value.strip():
                             add_categorical_value(selected_prop, new_value.strip())
                             st.success("Значение добавлено!")
@@ -278,7 +314,11 @@ if role == "Эксперт":
                 with col_del:
                     if current_values:
                         value_to_delete = st.selectbox("Удалить значение", current_values, key="del_cat_value")
+<<<<<<< HEAD
                         if st.button("🗑 Удалить", width="stretch"):
+=======
+                        if st.button("🗑 Удалить", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                             remaining = [v for v in current_values if v != value_to_delete]
                             conflicts = check_categorical_conflicts(selected_prop, remaining)
                             if conflicts:
@@ -288,13 +328,21 @@ if role == "Эксперт":
                                     st.write(f"• **{breed}** использует «{val}»")
                                 col1, col2 = st.columns(2)
                                 with col1:
+<<<<<<< HEAD
                                     if st.button("🗑 Удалить и очистить у пород", type="primary", width="stretch"):
+=======
+                                    if st.button("🗑 Удалить и очистить у пород", type="primary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                                         delete_categorical_value(selected_prop, value_to_delete)
                                         trim_breed_categorical_values(selected_prop, remaining)
                                         st.success("Значение удалено и очищено у пород!")
                                         st.rerun()
                                 with col2:
+<<<<<<< HEAD
                                     if st.button("❌ Отменить", width="stretch"):
+=======
+                                    if st.button("❌ Отменить", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                                         st.rerun()
                             else:
                                 delete_categorical_value(selected_prop, value_to_delete)
@@ -314,7 +362,11 @@ if role == "Эксперт":
             
             col_a, col_b = st.columns(2)
             with col_a:
+<<<<<<< HEAD
                 if st.button("✂️ Обрезать автоматически", type="primary", width="stretch"):
+=======
+                if st.button("✂️ Обрезать автоматически", type="primary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     success = trim_breed_numeric_values(data['prop'], data['min'], data['max'])
                     if success:
                         save_global_numeric_range(data['prop'], data['min'], data['max'])
@@ -325,7 +377,11 @@ if role == "Эксперт":
                     st.rerun()
             
             with col_b:
+<<<<<<< HEAD
                 if st.button("❌ Отменить", width="stretch"):
+=======
+                if st.button("❌ Отменить", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     st.session_state.conflict_data = None
                     st.rerun()
     with expert_tabs[3]:
@@ -335,7 +391,11 @@ if role == "Эксперт":
         # ГЛОБАЛЬНАЯ КНОПКА ВВЕРХУ
         if st.button(" Восстановить исходные 6 свойств для всех пород", 
                     type="secondary", 
+<<<<<<< HEAD
                     width="stretch"):
+=======
+                    use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
             if update_breed_properties_global():   # новая глобальная функция
                 st.success("✅ Все свойства восстановлены у **всех** пород собак!")
                 st.rerun()
@@ -366,7 +426,11 @@ if role == "Эксперт":
             col1, col2 = st.columns(2)
             
             with col1:
+<<<<<<< HEAD
                 if st.button("💾 Сохранить для этой породы", type="primary", width="stretch"):
+=======
+                if st.button("💾 Сохранить для этой породы", type="primary", use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                     if update_breed_properties(breed, selected_props):
                         st.success(f"✅ Описание свойств для «{breed}» обновлено!")
                         st.rerun()
@@ -415,7 +479,11 @@ if role == "Эксперт":
                         if st.button("💾 Сохранить диапазон", 
                                     key=f"save_num_{selected_breed}_{prop_name}",
                                     type="primary",
+<<<<<<< HEAD
                                     width="stretch"):
+=======
+                                    use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                             if min_val > max_val:
                                 st.error("Мин > Макс!")
                             else:
@@ -437,13 +505,22 @@ if role == "Эксперт":
                         if st.button("💾 Сохранить значения", 
                                     key=f"save_cat_{selected_breed}_{prop_name}",
                                     type="primary",
+<<<<<<< HEAD
                                     width="stretch"):
+=======
+                                    use_container_width=True):
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
                             save_breed_categorical_values(selected_breed, prop_name, selected_vals)
                             st.success("Сохранено!")
                             st.rerun()
             
+<<<<<<< HEAD
             if st.button("📋 Посмотреть все значения породы", type="secondary", width="stretch"):
                 st.dataframe(get_breed_values(selected_breed), width="stretch", hide_index=True)
+=======
+            if st.button("📋 Посмотреть все значения породы", type="secondary", use_container_width=True):
+                st.dataframe(get_breed_values(selected_breed), use_container_width=True, hide_index=True)
+>>>>>>> 255d116115f88bb6d0a2e9b5a4bb515235518017
 
 # ====================== СПЕЦИАЛИСТ ======================
 else:

@@ -22,7 +22,7 @@ def get_all_breeds():
 
 def get_breed_values(breed_name: str):
     """Показывает ТОЛЬКО активные свойства (фильтрация в Python — обходим баг pandas)"""
-    print(f"🔍 get_breed_values для породы: {breed_name}")
+    print(f" get_breed_values для породы: {breed_name}")
     
     conn = get_db_connection()
     query = """
@@ -73,17 +73,40 @@ def get_breeds_for_editor():
     return df
 
 def add_breed(name: str):
-    """Добавляет новую породу"""
+    """Добавляет новую породу и автоматически подключает к ней ВСЕ существующие свойства (активно = 1)"""
     if not name or not name.strip():
         return False
+    
+    name = name.strip()
     conn = get_db_connection()
     cur = conn.cursor()
+    
     try:
-        cur.execute("INSERT INTO породa_собаки (название) VALUES (?)", (name.strip(),))
+        # 1. Добавляем породу
+        cur.execute("INSERT INTO породa_собаки (название) VALUES (?)", (name,))
+        breed_id = cur.lastrowid
+        
+        # 2. Получаем все свойства
+        cur.execute("SELECT идентификатор FROM свойство")
+        all_properties = [row[0] for row in cur.fetchall()]
+        
+        # 3. Добавляем все свойства для новой породы
+        for prop_id in all_properties:
+            cur.execute("""
+                INSERT OR IGNORE INTO описание_свойств_породы 
+                (порода_id, свойство_id, активно) 
+                VALUES (?, ?, 1)
+            """, (breed_id, prop_id))
+        
         conn.commit()
+        print(f" Порода «{name}» добавлена со всеми свойствами")
         return True
     except sqlite3.IntegrityError:
         return False  # уже существует
+    except Exception as e:
+        print(f"Ошибка при добавлении породы: {e}")
+        conn.rollback()
+        return False
     finally:
         conn.close()
 
@@ -98,25 +121,78 @@ def delete_breed(name: str):
     return deleted
 
 def check_knowledge_completeness():
-    """Проверка полноты знаний (как в документе)"""
+    """Подробная проверка полноты знаний.
+    Возвращает список понятных сообщений об ошибках."""
     conn = get_db_connection()
     cur = conn.cursor()
     errors = []
     
+    # 1. Есть ли хотя бы одна порода?
     cur.execute("SELECT COUNT(*) FROM породa_собаки")
     if cur.fetchone()[0] == 0:
-        errors.append("Нет ни одной породы собак")
+        errors.append(" Нет ни одной породы собак. Добавьте хотя бы одну породу во вкладке «Виды собак».")
     
+    # 2. Есть ли хотя бы одно свойство?
     cur.execute("SELECT COUNT(*) FROM свойство")
     if cur.fetchone()[0] == 0:
-        errors.append("Нет ни одного свойства")
+        errors.append(" Нет ни одного свойства. Добавьте свойства во вкладке «Свойства».")
     
-    cur.execute("SELECT COUNT(*) FROM описание_свойств_породы")
-    if cur.fetchone()[0] == 0:
-        errors.append("Нет описаний свойств для пород")
+    # 3. Все ли свойства имеют тип?
+    cur.execute("""
+        SELECT название FROM свойство s
+        WHERE NOT EXISTS (SELECT 1 FROM вещественные_свойства WHERE свойство_id = s.идентификатор)
+          AND NOT EXISTS (SELECT 1 FROM целые_свойства WHERE свойство_id = s.идентификатор)
+          AND NOT EXISTS (SELECT 1 FROM категориальные_свойства WHERE свойство_id = s.идентификатор)
+    """)
+    bad_props = [row[0] for row in cur.fetchall()]
+    if bad_props:
+        errors.append(f" У следующих свойств не указан тип: **{', '.join(bad_props)}**. Укажите тип во вкладке «Свойства».")
+    
+    # 4. Для каждой породы проверяем активные свойства — есть ли для них значения?
+    cur.execute("""
+        SELECT п.название as порода, с.название as свойство, 
+               COALESCE(о.активно, 1) as активно
+        FROM породa_собаки п
+        JOIN описание_свойств_породы о ON о.порода_id = п.идентификатор
+        JOIN свойство с ON о.свойство_id = с.идентификатор
+        WHERE о.активно = 1
+    """)
+    active_links = cur.fetchall()
+    
+    for breed, prop, _ in active_links:
+        # Проверяем, есть ли значение для этого свойства у породы
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM (
+                SELECT 1 FROM вещественное_значение_для_породы WHERE описание_id IN (
+                    SELECT идентификатор FROM описание_свойств_породы 
+                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
+                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
+                )
+                UNION ALL
+                SELECT 1 FROM целое_значение_для_породы WHERE описание_id IN (
+                    SELECT идентификатор FROM описание_свойств_породы 
+                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
+                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
+                )
+                UNION ALL
+                SELECT 1 FROM категориальное_значение_для_породы WHERE описание_id IN (
+                    SELECT идентификатор FROM описание_свойств_породы 
+                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
+                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
+                )
+            )
+        """, (breed, prop, breed, prop, breed, prop))
+        
+        if cur.fetchone()[0] == 0:
+            errors.append(f" У породы **{breed}** не заполнено значение свойства **{prop}** (вкладка «Значения для вида»).")
     
     conn.close()
-    return errors if errors else ["✅ Все данные заполнены корректно!"]
+    
+    if not errors:
+        return [" Все данные заполнены корректно! Система готова к работе."]
+    else:
+        return errors
 
 def reset_breeds_to_default():
     """Полностью восстанавливает исходные 20 пород собак из лабораторной"""
@@ -145,8 +221,8 @@ def get_properties_for_editor():
     conn.close()
     return df
 
-def add_property(name: str):
-    """Добавляет новое свойство. Запрещает дубликаты БЕЗ УЧЁТА РЕГИСТРА (работает с кириллицей)."""
+def add_property(name: str, prop_type: str):
+    """Добавляет новое свойство с указанным типом и автоматически подключает его ко всем породам"""
     if not name or not name.strip():
         return False
     
@@ -155,18 +231,46 @@ def add_property(name: str):
     
     conn = get_db_connection()
     cur = conn.cursor()
+    
     try:
-        # Проверяем через Python — 100% надёжно для кириллицы
+        # Проверка дубликата (игнорируя регистр)
         cur.execute("SELECT название FROM свойство")
         existing = [row[0].lower() for row in cur.fetchall()]
-        
         if name_lower in existing:
-            return False  # уже существует (игнорируя регистр)
+            return False
         
+        # Добавляем свойство
         cur.execute("INSERT INTO свойство (название) VALUES (?)", (name_clean,))
+        prop_id = cur.lastrowid
+        
+        # Создаём запись в таблице соответствующего типа
+        if prop_type == "вещественное":
+            cur.execute("""
+                INSERT INTO вещественные_свойства (свойство_id, мин_значение_глобальное, макс_значение_глобальное) 
+                VALUES (?, 1, 90)
+            """, (prop_id,))
+        elif prop_type == "целое":
+            cur.execute("""
+                INSERT INTO целые_свойства (свойство_id, мин_значение_глобальное, макс_значение_глобальное) 
+                VALUES (?, 8, 18)
+            """, (prop_id,))
+        else:  # категориальное по умолчанию
+            cur.execute("INSERT INTO категориальные_свойства (свойство_id) VALUES (?)", (prop_id,))
+        
+        # Автоматически добавляем свойство ко ВСЕМ породам (активно = 1)
+        cur.execute("SELECT идентификатор FROM породa_собаки")
+        for (breed_id,) in cur.fetchall():
+            cur.execute("""
+                INSERT OR IGNORE INTO описание_свойств_породы (порода_id, свойство_id, активно) 
+                VALUES (?, ?, 1)
+            """, (breed_id, prop_id))
+        
         conn.commit()
+        print(f" Добавлено свойство «{name_clean}» ({prop_type}) ко всем породам")
         return True
-    except sqlite3.IntegrityError:
+    except Exception as e:
+        print(f"Ошибка add_property: {e}")
+        conn.rollback()
         return False
     finally:
         conn.close()
@@ -480,34 +584,47 @@ def get_breed_specific_value(breed_name: str, prop_name: str):
 
 
 def save_breed_numeric_value(breed_name: str, prop_name: str, min_val, max_val):
-    """Сохраняет диапазон для числового/целого свойства породы"""
+    """Сохраняет диапазон для числового свойства с правильным определением типа"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Получаем id породы и свойства
-    cur.execute("SELECT идентификатор FROM породa_собаки WHERE название = ?", (breed_name,))
-    breed_id = cur.fetchone()[0]
-    cur.execute("SELECT идентификатор FROM свойство WHERE название = ?", (prop_name,))
-    prop_id = cur.fetchone()[0]
-    
-    # Убеждаемся, что связь в описание_свойств_породы существует
-    cur.execute("INSERT OR IGNORE INTO описание_свойств_породы (порода_id, свойство_id) VALUES (?, ?)", 
-                (breed_id, prop_id))
-    cur.execute("SELECT идентификатор FROM описание_свойств_породы WHERE порода_id = ? AND свойство_id = ?", 
-                (breed_id, prop_id))
-    desc_id = cur.fetchone()[0]
-    
-    # Определяем тип свойства
-    if "вес" in prop_name.lower() or "рост" in prop_name.lower():
-        table = "вещественное_значение_для_породы"
-    else:
-        table = "целое_значение_для_породы"
-    
-    cur.execute(f"INSERT OR REPLACE INTO {table} (описание_id, мин_значение, макс_значение) VALUES (?, ?, ?)",
-                (desc_id, min_val, max_val))
-    
-    conn.commit()
-    conn.close()
+    try:
+        # Получаем id породы и свойства
+        cur.execute("SELECT идентификатор FROM породa_собаки WHERE название = ?", (breed_name,))
+        breed_id = cur.fetchone()[0]
+        cur.execute("SELECT идентификатор FROM свойство WHERE название = ?", (prop_name,))
+        prop_id = cur.fetchone()[0]
+        
+        # Определяем тип свойства правильно
+        prop_type = get_property_type(prop_name)
+        
+        # Убеждаемся, что связь существует
+        cur.execute("""
+            INSERT OR IGNORE INTO описание_свойств_породы (порода_id, свойство_id, активно) 
+            VALUES (?, ?, 1)
+        """, (breed_id, prop_id))
+        cur.execute("SELECT идентификатор FROM описание_свойств_породы WHERE порода_id = ? AND свойство_id = ?", 
+                    (breed_id, prop_id))
+        desc_id = cur.fetchone()[0]
+        
+        # Выбираем правильную таблицу
+        if prop_type == "вещественное":
+            table = "вещественное_значение_для_породы"
+        else:
+            table = "целое_значение_для_породы"
+        
+        cur.execute(f"INSERT OR REPLACE INTO {table} (описание_id, мин_значение, макс_значение) VALUES (?, ?, ?)",
+                    (desc_id, min_val, max_val))
+        
+        conn.commit()
+        print(f" Сохранено {prop_name} ({prop_type}) для {breed_name}")
+        return True
+    except Exception as e:
+        print(f"Ошибка save_breed_numeric_value: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 def save_breed_categorical_values(breed_name: str, prop_name: str, selected_values: list):
@@ -595,7 +712,7 @@ def check_numeric_conflicts(prop_name: str, new_min, new_max):
 def trim_breed_numeric_values(prop_name: str, new_min, new_max):
     """Финальная версия обрезки.
     Гарантирует, что диапазон породы всегда лежит внутри глобального диапазона (min <= max)."""
-    print(f"🔧 Финальная обрезка для '{prop_name}' -> {new_min} - {new_max}")
+    print(f" Финальная обрезка для '{prop_name}' -> {new_min} - {new_max}")
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -634,10 +751,10 @@ def trim_breed_numeric_values(prop_name: str, new_min, new_max):
         
         updated = cur.rowcount
         conn.commit()
-        print(f"✅ Финальная обрезка завершена. Обновлено {updated} записей для '{prop_name}'")
+        print(f" Финальная обрезка завершена. Обновлено {updated} записей для '{prop_name}'")
         return updated > 0
     except Exception as e:
-        print(f"❌ Ошибка финальной обрезки: {e}")
+        print(f" Ошибка финальной обрезки: {e}")
         conn.rollback()
         return False
     finally:
@@ -712,16 +829,16 @@ def reset_possible_values_to_default():
         cur.execute("DELETE FROM категориальные_значения")
         
         conn.commit()
-        print("✅ Таблицы значений очищены")
+        print(" Таблицы значений очищены")
         
         # 3. Заполняем всё заново из исходных данных курсовой
         from database.populate_data import populate_database
         populate_database()
         
-        print("✅ Полный сброс выполнен успешно")
+        print(" Полный сброс выполнен успешно")
         return True
     except Exception as e:
-        print(f"❌ Ошибка при сбросе: {e}")
+        print(f" Ошибка при сбросе: {e}")
         conn.rollback()
         return False
     finally:
@@ -731,11 +848,56 @@ def reset_possible_values_to_default():
 
 
 def update_breed_properties_global():
-    """Глобальное восстановление ВСЕХ свойств у ВСЕХ пород собак.
-    Использует populate_database(), поэтому значения тоже возвращаются."""
+    """Глобальное восстановление ВСЕХ 6 свойств для ВСЕХ пород собак.
+    1. Заполняет исходные данные через populate_database()
+    2. Принудительно делает ВСЕ свойства активными (активно = 1)"""
     from database.populate_data import populate_database
-    populate_database()
-    print("✅ Глобальное восстановление всех свойств для всех пород выполнено")
-    return True
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Восстанавливаем все исходные породы, свойства и значения
+        print(" Запускаем populate_database()...")
+        populate_database()
+        
+        # 2. Явно активируем ВСЕ связи "порода — свойство"
+        cur.execute("UPDATE описание_свойств_породы SET активно = 1")
+        updated = cur.rowcount
+        conn.commit()
+        
+        print(f" Глобальное восстановление завершено! Активировано {updated} свойств")
+        return True
+    except Exception as e:
+        print(f" Ошибка в update_breed_properties_global: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
-print("✅ Модуль db.py готов")
+
+
+def get_active_properties():
+    """Возвращает список свойств, которые активно используются хотя бы у одной породы.
+    Стабильная версия — избегаем проблем с pandas и o.активно."""
+    conn = get_db_connection()
+    
+    query = """
+    SELECT DISTINCT 
+        с.название,
+        COALESCE(o.активно, 1) as активно
+    FROM свойство с
+    LEFT JOIN описание_свойств_породы o 
+        ON o.свойство_id = с.идентификатор
+    ORDER BY с.название
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    # Фильтруем активные свойства уже в Python (это решает проблему)
+    active = df[df['активно'] == 1]['название'].tolist()
+    
+    return active
+
+
+print(" Модуль db.py готов")

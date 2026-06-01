@@ -50,8 +50,8 @@ def check_property_match(breed_id: int, prop_id: int, user_value, conn):
 
 def refute_hypotheses(user_input: dict):
     """
-    Алгоритм опровержения гипотез (строго по разделу 3.5 документа)
-    user_input = {'вес': 35.0, 'рост в холке': 60.0, 'тип шерсти': 'Средняя', ...}
+    Алгоритм опровержения гипотез с учётом флага 'активно'.
+    Теперь явно указывает, какие свойства были проигнорированы у породы.
     """
     if not user_input:
         return [], [], "Не введено ни одного свойства"
@@ -59,35 +59,52 @@ def refute_hypotheses(user_input: dict):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Получаем все породы
     cur.execute("SELECT идентификатор, название FROM породa_собаки")
     breeds = cur.fetchall()
 
     possible_breeds = []
-    refuted = []  # список (порода, причина)
+    refuted = []
 
     for breed_id, breed_name in breeds:
         is_possible = True
         reasons = []
+        ignored_props = []   # ← новые свойства, которые были проигнорированы
 
-        # Проверяем каждое введённое пользователем свойство
         for prop_name, user_value in user_input.items():
-            # Находим ID свойства
             cur.execute("SELECT идентификатор FROM свойство WHERE название = ?", (prop_name,))
             prop_row = cur.fetchone()
             if not prop_row:
                 continue
             prop_id = prop_row[0]
 
+            # Проверяем статус активности свойства у этой породы
+            cur.execute("""
+                SELECT активно 
+                FROM описание_свойств_породы 
+                WHERE порода_id = ? AND свойство_id = ?
+            """, (breed_id, prop_id))
+            active_row = cur.fetchone()
+
+            if active_row and active_row[0] == 0:
+                ignored_props.append(prop_name)   # ← запоминаем, что свойство отключено
+                continue
+
+            # Если активно — проверяем соответствие
             match, allowed_str = check_property_match(breed_id, prop_id, user_value, conn)
             
             if not match:
                 is_possible = False
                 reasons.append(f"Свойство «{prop_name}» = {user_value} не входит в {allowed_str}")
-                break  # можно продолжить проверку остальных, но по алгоритму достаточно одной причины
+                break
 
         if is_possible:
             possible_breeds.append(breed_name)
+            # Добавляем информацию об игнорированных свойствах
+            if ignored_props:
+                ignored_text = f" (проигнорированы свойства: {', '.join(ignored_props)})"
+            else:
+                ignored_text = ""
+            possible_breeds[-1] = breed_name + ignored_text   # добавляем в название для отображения
         else:
             refuted.append((breed_name, "; ".join(reasons) or "Не соответствует введённым данным"))
 
@@ -95,13 +112,10 @@ def refute_hypotheses(user_input: dict):
 
     # Формируем результат
     if len(possible_breeds) == 1:
-        result = f"Порода: {possible_breeds[0]}"
         explanation = f"Подходящая порода: {possible_breeds[0]}"
     elif len(possible_breeds) > 1:
-        result = f"Возможные породы: {', '.join(possible_breeds)}"
         explanation = f"Подходят несколько пород: {', '.join(possible_breeds)}"
     else:
-        result = "Порода не определена"
         explanation = "Ни одна порода не соответствует введённым данным"
 
     return possible_breeds, refuted, explanation
@@ -118,6 +132,6 @@ if __name__ == "__main__":
         'назначение': 'Служебная'
     }
     possible, refuted, expl = refute_hypotheses(test_input)
-    print("✅ Тест решателя пройден")
+    print(" Тест решателя пройден")
     print("Результат:", possible)
     print("Опровергнуто:", len(refuted), "пород")

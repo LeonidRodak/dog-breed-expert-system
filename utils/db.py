@@ -2,6 +2,20 @@ import sqlite3
 import pandas as pd
 import json
 
+def _restore_ai_model():
+    """Восстанавливает модель ИИ после возврата к исходным данным (вызывается из reset-функций)"""
+    try:
+        from utils.ml_model import train_model
+        print(" Восстанавливаем модель ИИ после сброса к исходным данным...")
+        success = train_model()
+        if success:
+            print(" Модель ИИ успешно восстановлена и сохранена")
+        else:
+            print(" Не удалось восстановить модель ИИ")
+    except Exception as e:
+        print(f" Предупреждение: не удалось восстановить модель ИИ: {e}")
+
+
 def get_db_connection():
     """Подключение к базе знаний"""
     return sqlite3.connect('database/knowledge_base.db', check_same_thread=False)
@@ -200,19 +214,29 @@ def reset_breeds_to_default():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM породa_собаки")
+    cur.execute("DELETE FROM описание_свойств_породы")  # очищаем связи, чтобы было ровно 120
     conn.commit()
     conn.close()
     
     # Вызываем заполнение исходными данными
     from database.populate_data import populate_database
     populate_database()
+    _restore_ai_model()
     return True
 
 def reset_breeds_to_default_safe():
-    """Добавляет недостающие исходные 20 пород, не удаляя пользовательские"""
+    """Полностью восстанавливает только исходные 20 пород (удаляет все добавленные пользователем).
+    Также жёстко очищает связи до ровно 120."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM породa_собаки")
+    cur.execute("DELETE FROM описание_свойств_породы")
+    conn.commit()
+    conn.close()
+    
     from database.populate_data import populate_database
-    # populate_database уже использует INSERT OR IGNORE, поэтому безопасно
     populate_database()
+    _restore_ai_model()
     return True
 
 def get_properties_for_editor():
@@ -290,13 +314,37 @@ def delete_property(name: str):
         conn.close()
 
 def reset_properties_to_default():
-    """Полное восстановление исходных 6 свойств + всех типов + глобальных диапазонов + 
-    категориальных значений + связей. 
-    Используем оригинальный populate_database — он сделан именно для этого и 
-    использует INSERT OR IGNORE везде, поэтому значения пород НЕ удаляются."""
+    """Полное восстановление только исходных 6 свойств (удаляет все добавленные пользователем свойства).
+    Также очищает все связанные данные."""
     from database.populate_data import populate_database
     
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Очищаем все данные, связанные со свойствами
+        cur.execute("DELETE FROM описание_свойств_породы")
+        cur.execute("DELETE FROM вещественные_свойства")
+        cur.execute("DELETE FROM целые_свойства")
+        cur.execute("DELETE FROM категориальные_свойства")
+        cur.execute("DELETE FROM категориальные_значения")
+        cur.execute("DELETE FROM вещественное_значение_для_породы")
+        cur.execute("DELETE FROM целое_значение_для_породы")
+        cur.execute("DELETE FROM категориальное_значение_для_породы")
+        
+        # 2. Удаляем все свойства (останутся только те, которые заново добавит populate)
+        cur.execute("DELETE FROM свойство")
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Ошибка при очистке свойств: {e}")
+        return False
+    finally:
+        conn.close()
+    
     populate_database()
+    _restore_ai_model()
     return True
 
 
@@ -807,7 +855,7 @@ def trim_breed_categorical_values(prop_name: str, new_values: list):
     """.format(','.join(['?'] * len(new_values))), [prop_name, prop_name] + new_values)
     
     conn.commit()
-    conn.close()        
+    conn.close()
 
 
 def reset_possible_values_to_default():
@@ -818,16 +866,19 @@ def reset_possible_values_to_default():
     cur = conn.cursor()
     
     try:
-        # 1. Очищаем все значения пород (чтобы старые обрезанные значения удалились)
+        # 1. Очищаем все значения пород
         cur.execute("DELETE FROM вещественное_значение_для_породы")
         cur.execute("DELETE FROM целое_значение_для_породы")
         cur.execute("DELETE FROM категориальное_значение_для_породы")
         
-        # 2. Очищаем глобальные диапазоны
+        # 2. Очищаем глобальные диапазоны и категориальные значения
         cur.execute("DELETE FROM вещественные_свойства")
         cur.execute("DELETE FROM целые_свойства")
         cur.execute("DELETE FROM категориальные_свойства")
         cur.execute("DELETE FROM категориальные_значения")
+        
+        # 3. Очищаем связи порода-свойство (чтобы убрать лишние, накопившиеся за время редактирования)
+        cur.execute("DELETE FROM описание_свойств_породы")
         
         conn.commit()
         print(" Таблицы значений очищены")
@@ -837,6 +888,7 @@ def reset_possible_values_to_default():
         populate_database()
         
         print(" Полный сброс выполнен успешно")
+        _restore_ai_model()
         return True
     except Exception as e:
         print(f" Ошибка при сбросе: {e}")
@@ -849,31 +901,53 @@ def reset_possible_values_to_default():
 
 
 def update_breed_properties_global():
-    """Глобальное восстановление ВСЕХ 6 свойств для ВСЕХ пород собак.
-    1. Заполняет исходные данные через populate_database()
-    2. Принудительно делает ВСЕ свойства активными (активно = 1)"""
+    """Полное восстановление только исходных 6 свойств для всех пород 
+    (удаляет добавленные пользователем свойства + восстанавливает все галочки)."""
     from database.populate_data import populate_database
+    
     conn = get_db_connection()
     cur = conn.cursor()
     
     try:
-        # 1. Восстанавливаем все исходные породы, свойства и значения
+        # Полная очистка
+        cur.execute("DELETE FROM описание_свойств_породы")
+        cur.execute("DELETE FROM вещественные_свойства")
+        cur.execute("DELETE FROM целые_свойства")
+        cur.execute("DELETE FROM категориальные_свойства")
+        cur.execute("DELETE FROM категориальные_значения")
+        cur.execute("DELETE FROM вещественное_значение_для_породы")
+        cur.execute("DELETE FROM целое_значение_для_породы")
+        cur.execute("DELETE FROM категориальное_значение_для_породы")
+        cur.execute("DELETE FROM свойство")
+        conn.commit()
+        conn.close()   #  закрываем соединение перед вызовом populate_database()
+
+        # Теперь безопасно вызываем populate
         print(" Запускаем populate_database()...")
         populate_database()
-        
-        # 2. Явно активируем ВСЕ связи "порода — свойство"
+
+        # Открываем новое соединение только для активации галочек
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("UPDATE описание_свойств_породы SET активно = 1")
         updated = cur.rowcount
         conn.commit()
         
         print(f" Глобальное восстановление завершено! Активировано {updated} свойств")
+        _restore_ai_model()
         return True
     except Exception as e:
         print(f" Ошибка в update_breed_properties_global: {e}")
-        conn.rollback()
+        try:
+            conn.rollback()
+        except:
+            pass
         return False
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except:
+            pass
 
 
 
@@ -899,6 +973,95 @@ def get_active_properties():
     active = df[df['активно'] == 1]['название'].tolist()
     
     return active
+
+
+def is_data_in_original_state():
+    """
+    Строгая проверка на соответствие исходным данным из populate_data.py.
+    При добавлении своих пород будет ругаться на «лишние породы».
+    Проверяет точное соответствие по породам, свойствам, диапазонам и категориальным значениям.
+    Проверка на количество связей убрана (была непонятна пользователю).
+    
+    Используется перед запуском модели ИИ.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    errors = []
+
+    # === 1. Точный список 20 пород (ругаться на лишние) ===
+    original_breeds = {
+        'Немецкая овчарка', 'Лабрадор ретривер', 'Золотистый ретривер', 'Ротвейлер',
+        'Бульдог', 'Бигль', 'Пудель', 'Такса', 'Хаски', 'Чихуахуа',
+        'Доберман', 'Боксёр', 'Корги', 'Немецкий дог', 'Йоркширский терьер',
+        'Шарпей', 'Аляскинский маламут', 'Сенбернар', 'Бордер колли', 'Мопс'
+    }
+    cur.execute("SELECT название FROM породa_собаки")
+    current_breeds = {row[0] for row in cur.fetchall()}
+    if current_breeds != original_breeds:
+        missing = original_breeds - current_breeds
+        extra = current_breeds - original_breeds
+        if missing:
+            errors.append(f"Отсутствуют породы: {', '.join(sorted(missing))}")
+        if extra:
+            errors.append(f"Лишние породы: {', '.join(sorted(extra))}")
+
+    # === 2. Точный список 6 свойств ===
+    original_props = {'вес', 'рост в холке', 'тип шерсти', 'темперамент', 'продолжительность жизни', 'назначение'}
+    cur.execute("SELECT название FROM свойство")
+    current_props = {row[0] for row in cur.fetchall()}
+    if current_props != original_props:
+        errors.append("Список свойств отличается от исходного")
+
+    # === 3. Глобальные диапазоны ===
+    expected_globals = {
+        'вес': (1.0, 90.0),
+        'рост в холке': (15.0, 90.0),
+        'продолжительность жизни': (8, 18)
+    }
+    for prop, (exp_min, exp_max) in expected_globals.items():
+        cur.execute("""
+            SELECT мин_значение_глобальное, макс_значение_глобальное 
+            FROM (
+                SELECT vs.мин_значение_глобальное, vs.макс_значение_глобальное, s.название
+                FROM вещественные_свойства vs JOIN свойство s ON vs.свойство_id = s.идентификатор
+                UNION ALL
+                SELECT cs.мин_значение_глобальное, cs.макс_значение_глобальное, s.название
+                FROM целые_свойства cs JOIN свойство s ON cs.свойство_id = s.идентификатор
+            ) t WHERE t.название = ?
+        """, (prop,))
+        row = cur.fetchone()
+        if not row or (row[0], row[1]) != (exp_min, exp_max):
+            errors.append(f"Глобальный диапазон для '{prop}' отличается от исходного")
+
+    # === 4. Категориальные значения ===
+    expected_cat = {
+        'тип шерсти': {'Короткая', 'Средняя', 'Длинная'},
+        'темперамент': {'Спокойный', 'Активный', 'Агрессивный', 'Дружелюбный'},
+        'назначение': {'Охотничья', 'Охранная', 'Декоративная', 'Служебная', 'Компаньон'}
+    }
+    for prop, expected_set in expected_cat.items():
+        cur.execute("""
+            SELECT кзн.значение
+            FROM категориальные_значения кзн
+            JOIN категориальные_свойства кс ON кзн.категориальное_свойство_id = кс.идентификатор
+            JOIN свойство с ON кс.свойство_id = с.идентификатор
+            WHERE с.название = ?
+        """, (prop,))
+        current_set = {row[0] for row in cur.fetchall()}
+        if current_set != expected_set:
+            errors.append(f"Допустимые значения для '{prop}' отличаются от исходных")
+
+    # === 5. Нет явно выключенных галочек ===
+    cur.execute("SELECT COUNT(*) FROM описание_свойств_породы WHERE активно = 0")
+    if cur.fetchone()[0] > 0:
+        errors.append("Есть выключенные галочки")
+
+    conn.close()
+
+    if errors:
+        return False, "Данные не соответствуют исходным:\n" + "\n".join(" — " + e for e in errors)
+    
+    return True, "Данные полностью соответствуют исходным (включая галочки)"
 
 
 print(" Модуль db.py готов")

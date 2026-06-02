@@ -94,7 +94,7 @@ def train_model():
     joblib.dump(scaler, SCALER_PATH)
     save_data_hash()
 
-    print(f"✅ Модель успешно обучена и сохранена! (пород: {len(y)})")
+    print(f" Модель успешно обучена и сохранена! (пород: {len(y)})")
     return True
 
 

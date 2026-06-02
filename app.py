@@ -34,13 +34,16 @@ from utils.solver import refute_hypotheses
 st.set_page_config(page_title="Экспертная система. Классификация пород собак", layout="wide")
 
 # ====================== ЗАГРУЗКА / ОБУЧЕНИЕ МОДЕЛИ ИИ ======================
-from utils.ml_model import train_model, is_model_valid
+# ====================== ПРОВЕРКА МОДЕЛИ ИИ ======================
+from utils.ml_model import is_model_valid
+
+print(" Проверка состояния модели ИИ...")
 
 if not is_model_valid():
-    print(" Данные изменены или модель отсутствует. Обучаем модель заново...")
-    train_model()
+    print("  Данные были изменены. Модель ИИ инвалидирована и НЕ будет автоматически переобучаться.")
+    # train_model()
 else:
-    print(" Модель ИИ загружена и актуальна")
+    print("  Модель ИИ загружена и актуальна")
 
 # Инициализация session_state
 if 'show_reset_confirm' not in st.session_state:
@@ -612,28 +615,33 @@ else:
             # Показываем кнопку модели ИИ только если обычный поиск не дал однозначного результата
             if len(possible) == 0 or len(possible) > 1:
             # === КНОПКА И ВЫВОД МОДЕЛИ ИИ ===
-            # === КНОПКА И ВЫВОД МОДЕЛИ ИИ ===
                 st.divider()
                 st.subheader("Модель машинного обучения")
                 st.caption("Показывает топ-3 наиболее вероятных пород")
                 
                 if st.button("Запустить модель ИИ (топ-3)", type="primary", width="stretch"):
+                    from utils.db import is_data_in_original_state
                     from utils.ml_model import predict_top3
+
+                    is_original, reason = is_data_in_original_state()
                     
-                    top3, error_msg = predict_top3(st.session_state.user_input)
-                    
-                    if error_msg:
-                        st.error(error_msg)
-                    elif top3:
-                        st.success("**Модель ИИ рекомендует следующие породы:**")
-                        
-                        for breed, prob in top3:
-                            st.write(f"**{breed}** — **{prob}%**")
-                            st.progress(prob / 100)
-                        
-                        st.caption("Вероятности рассчитаны моделью Random Forest")
+                    if not is_original:
+                        st.error(" **Модель ИИ доступна только при исходных данных**")
+                        st.info(reason)
+                        st.caption("Вернись в режим Эксперт — используй кнопки сброса, чтобы восстановить исходные данные и галочки.")
                     else:
-                        st.warning("Не удалось получить предсказание от модели")
+                        top3, error_msg = predict_top3(st.session_state.user_input)
+                        
+                        if error_msg:
+                            st.error(error_msg)
+                        elif top3:
+                            st.success("**Модель ИИ рекомендует следующие породы:**")
+                            for breed, prob in top3:
+                                st.write(f"**{breed}** — **{prob}%**")
+                                st.progress(prob / 100)
+                            st.caption("Вероятности рассчитаны моделью Random Forest")
+                        else:
+                            st.warning("Не удалось получить предсказание от модели")
 
     with spec_tabs[1]:
         st.header("Просмотр базы знаний")

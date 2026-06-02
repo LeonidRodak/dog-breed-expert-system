@@ -136,78 +136,87 @@ def delete_breed(name: str):
     return deleted
 
 def check_knowledge_completeness():
-    """Подробная проверка полноты знаний.
-    Возвращает список понятных сообщений об ошибках."""
+    """Проверка полноты знаний (строгая версия для категориальных значений)."""
     conn = get_db_connection()
     cur = conn.cursor()
     errors = []
-    
-    # 1. Есть ли хотя бы одна порода?
+
+    # 1. Базовые проверки
     cur.execute("SELECT COUNT(*) FROM породa_собаки")
     if cur.fetchone()[0] == 0:
-        errors.append(" Нет ни одной породы собак. Добавьте хотя бы одну породу во вкладке «Виды собак».")
-    
-    # 2. Есть ли хотя бы одно свойство?
+        errors.append("Нет ни одной породы собак.")
+
     cur.execute("SELECT COUNT(*) FROM свойство")
     if cur.fetchone()[0] == 0:
-        errors.append(" Нет ни одного свойства. Добавьте свойства во вкладке «Свойства».")
-    
-    # 3. Все ли свойства имеют тип?
+        errors.append("Нет ни одного свойства.")
+
+    # 2. Проверка значений + соответствие глобальному списку (для категориальных)
     cur.execute("""
-        SELECT название FROM свойство s
-        WHERE NOT EXISTS (SELECT 1 FROM вещественные_свойства WHERE свойство_id = s.идентификатор)
-          AND NOT EXISTS (SELECT 1 FROM целые_свойства WHERE свойство_id = s.идентификатор)
-          AND NOT EXISTS (SELECT 1 FROM категориальные_свойства WHERE свойство_id = s.идентификатор)
-    """)
-    bad_props = [row[0] for row in cur.fetchall()]
-    if bad_props:
-        errors.append(f" У следующих свойств не указан тип: **{', '.join(bad_props)}**. Укажите тип во вкладке «Свойства».")
-    
-    # 4. Для каждой породы проверяем активные свойства — есть ли для них значения?
-    cur.execute("""
-        SELECT п.название as порода, с.название as свойство, 
-               COALESCE(о.активно, 1) as активно
-        FROM породa_собаки п
-        JOIN описание_свойств_породы о ON о.порода_id = п.идентификатор
+        SELECT 
+            п.название as breed,
+            с.название as prop,
+            о.идентификатор as desc_id,
+            CASE 
+                WHEN vs.свойство_id IS NOT NULL THEN 'numeric'
+                WHEN cs.свойство_id IS NOT NULL THEN 'integer'
+                ELSE 'categorical'
+            END as ptype
+        FROM описание_свойств_породы о
+        JOIN породa_собаки п ON о.порода_id = п.идентификатор
         JOIN свойство с ON о.свойство_id = с.идентификатор
-        WHERE о.активно = 1
+        LEFT JOIN вещественные_свойства vs ON vs.свойство_id = с.идентификатор
+        LEFT JOIN целые_свойства cs ON cs.свойство_id = с.идентификатор
+        WHERE COALESCE(о.активно, 1) = 1
     """)
-    active_links = cur.fetchall()
     
-    for breed, prop, _ in active_links:
-        # Проверяем, есть ли значение для этого свойства у породы
-        cur.execute("""
-            SELECT COUNT(*) 
-            FROM (
-                SELECT 1 FROM вещественное_значение_для_породы WHERE описание_id IN (
-                    SELECT идентификатор FROM описание_свойств_породы 
-                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
-                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
-                )
-                UNION ALL
-                SELECT 1 FROM целое_значение_для_породы WHERE описание_id IN (
-                    SELECT идентификатор FROM описание_свойств_породы 
-                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
-                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
-                )
-                UNION ALL
-                SELECT 1 FROM категориальное_значение_для_породы WHERE описание_id IN (
-                    SELECT идентификатор FROM описание_свойств_породы 
-                    WHERE порода_id = (SELECT идентификатор FROM породa_собаки WHERE название = ?) 
-                    AND свойство_id = (SELECT идентификатор FROM свойство WHERE название = ?)
-                )
-            )
-        """, (breed, prop, breed, prop, breed, prop))
-        
-        if cur.fetchone()[0] == 0:
-            errors.append(f" У породы **{breed}** не заполнено значение свойства **{prop}** (вкладка «Значения для вида»).")
-    
+    for breed, prop, desc_id, ptype in cur.fetchall():
+        if ptype in ['numeric', 'integer']:
+            # Для числовых — просто проверяем наличие значения
+            cur.execute("""
+                SELECT 1 FROM (
+                    SELECT 1 FROM вещественное_значение_для_породы WHERE описание_id = ?
+                    UNION ALL
+                    SELECT 1 FROM целое_значение_для_породы WHERE описание_id = ?
+                ) LIMIT 1
+            """, (desc_id, desc_id))
+            has_value = cur.fetchone() is not None
+            
+            if not has_value:
+                errors.append(f"У породы **{breed}** не заполнено значение свойства **{prop}**")
+
+        else:  # categorical — строгая проверка
+            # Получаем все значения, которые сейчас присвоены породе
+            cur.execute("""
+                SELECT DISTINCT кзн.значение
+                FROM категориальное_значение_для_породы кз
+                JOIN категориальные_значения кзн ON кз.категориальное_значение_id = кзн.идентификатор
+                WHERE кз.описание_id = ?
+            """, (desc_id,))
+            assigned_values = {row[0] for row in cur.fetchall()}
+
+            # Получаем текущий глобальный список значений для этого свойства
+            cur.execute("""
+                SELECT DISTINCT кзн.значение
+                FROM категориальные_значения кзн
+                JOIN категориальные_свойства кс ON кзн.категориальное_свойство_id = кс.идентификатор
+                JOIN свойство с ON кс.свойство_id = с.идентификатор
+                WHERE с.название = ?
+            """, (prop,))
+            global_values = {row[0] for row in cur.fetchall()}
+
+            # Проверяем, что все присвоенные значения ещё существуют глобально
+            orphaned = assigned_values - global_values
+            
+            if not assigned_values:
+                errors.append(f"У породы **{breed}** не заполнено значение свойства **{prop}**")
+            elif orphaned:
+                errors.append(f"У породы **{breed}** для свойства **{prop}** остались устаревшие значения: {', '.join(orphaned)} (их уже нет в глобальном списке)")
+
     conn.close()
-    
+
     if not errors:
-        return [" Все данные заполнены корректно! Система готова к работе."]
-    else:
-        return errors
+        return ["Все данные заполнены корректно!"]
+    return errors
 
 def reset_breeds_to_default():
     """Полностью восстанавливает исходные 20 пород собак из лабораторной"""

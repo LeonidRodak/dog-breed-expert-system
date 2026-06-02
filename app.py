@@ -51,31 +51,34 @@ if 'show_reset_confirm' not in st.session_state:
 st.title(" Экспертная система")
 st.subheader("Классификация пород собак")
 
-# ====================== ВЫБОР РОЛИ (disabled + сообщение) ======================
+# ====================== ВЫБОР РОЛИ ======================
 if 'current_role' not in st.session_state:
     st.session_state.current_role = "Эксперт"
 
-# Проверяем полноту знаний один раз за рендер
+# Проверяем полноту знаний
 check_result = check_knowledge_completeness()
-is_complete = "Все данные заполнены корректно" in check_result[0]
+is_complete = any("Все данные заполнены корректно" in str(msg) for msg in check_result)
 
-# Показываем радио-кнопки
+# Если знания неполные — принудительно оставляем в режиме Эксперт
+if not is_complete:
+    st.session_state.current_role = "Эксперт"
+
+# Радио-кнопки ролей
 role = st.sidebar.radio(
     "Роль:", 
     ["Эксперт", "Специалист"], 
     horizontal=True,
     key="role_selector",
-    disabled=not is_complete and st.session_state.current_role == "Эксперт",  # отключаем Специалист
+    disabled=not is_complete,                    # ← правильная блокировка
     index=0 if st.session_state.current_role == "Эксперт" else 1
 )
 
-# Показываем предупреждение, если знаний недостаточно
-if not is_complete:
-    st.sidebar.error(" **Невозможно перейти в режим Специалиста!**")
-    st.sidebar.info("Нажмите кнопку «Проверка полноты знаний», чтобы увидеть, что именно нужно заполнить.")
-
-# Сохраняем выбранную роль
 st.session_state.current_role = role
+
+# Показываем предупреждение и ошибки
+if not is_complete:
+    st.sidebar.error("**Невозможно перейти в режим Специалиста!**")
+    st.sidebar.info("Нажмите «Проверка полноты знаний», чтобы увидеть, что нужно исправить.")
 
 # ====================== ЭКСПЕРТ ======================
 if role == "Эксперт":
@@ -340,28 +343,51 @@ if role == "Эксперт":
                 
                 with col_del:
                     if current_values:
-                        value_to_delete = st.selectbox("Удалить значение", current_values, key=f"del_cat_value_{selected_prop}")
-                        if st.button(" Удалить", width="stretch"):
-                            remaining = [v for v in current_values if v != value_to_delete]
-                            conflicts = check_categorical_conflicts(selected_prop, remaining)
+                        value_to_delete = st.selectbox(
+                            "Выберите значение для удаления",
+                            current_values,
+                            key=f"del_select_{selected_prop}"
+                        )
+
+                        # Кнопка начала удаления
+                        if st.button(" Удалить значение", type="secondary", width="stretch", 
+                                    key=f"btn_start_del_{selected_prop}"):
+                            st.session_state[f"delete_pending_{selected_prop}"] = value_to_delete
+                            st.rerun()
+
+                        # === БЛОК ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ ===
+                        pending_value = st.session_state.get(f"delete_pending_{selected_prop}")
+                        
+                        if pending_value:
+                            conflicts = check_categorical_conflicts(
+                                selected_prop, 
+                                [v for v in current_values if v != pending_value]
+                            )
+
                             if conflicts:
-                                st.warning(" **Нарушение целостности знаний!**")
-                                st.write("Следующие породы используют удаляемое значение:")
+                                st.warning(f"**Значение «{pending_value}» используется у пород:**")
                                 for breed, val in conflicts:
-                                    st.write(f"• **{breed}** использует «{val}»")
+                                    st.write(f"• {breed}")
+
                                 col1, col2 = st.columns(2)
                                 with col1:
-                                    if st.button(" Удалить и очистить у пород", type="primary", width="stretch"):
-                                        delete_categorical_value(selected_prop, value_to_delete)
-                                        trim_breed_categorical_values(selected_prop, remaining)
-                                        st.success("Значение удалено и очищено у пород!")
+                                    if st.button(" Удалить и очистить у пород", type="primary", width="stretch",
+                                                key=f"btn_force_del_{selected_prop}"):
+                                        delete_categorical_value(selected_prop, pending_value)
+                                        trim_breed_categorical_values(selected_prop, 
+                                                                    [v for v in current_values if v != pending_value])
+                                        st.success(f"Значение «{pending_value}» удалено и очищено у пород!")
+                                        del st.session_state[f"delete_pending_{selected_prop}"]
                                         st.rerun()
                                 with col2:
-                                    if st.button(" Отменить", width="stretch"):
+                                    if st.button(" Отменить", width="stretch", key=f"btn_cancel_{selected_prop}"):
+                                        del st.session_state[f"delete_pending_{selected_prop}"]
                                         st.rerun()
                             else:
-                                delete_categorical_value(selected_prop, value_to_delete)
-                                st.success(f"Значение «{value_to_delete}» удалено!")
+                                # Нет конфликтов — удаляем сразу
+                                delete_categorical_value(selected_prop, pending_value)
+                                st.success(f"Значение «{pending_value}» удалено!")
+                                del st.session_state[f"delete_pending_{selected_prop}"]
                                 st.rerun()
                 
                 st.write("**Все текущие значения:**", ", ".join(current_values) if current_values else "Пока пусто")

@@ -110,6 +110,7 @@ def add_breed(name: str):
     finally:
         conn.close()
 
+
 def delete_breed(name: str):
     """Удаляет породу по названию"""
     conn = get_db_connection()

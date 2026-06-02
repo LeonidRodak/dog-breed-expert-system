@@ -32,6 +32,16 @@ from utils.db import (
 from utils.solver import refute_hypotheses
 
 st.set_page_config(page_title="Экспертная система. Классификация пород собак", layout="wide")
+
+# ====================== ЗАГРУЗКА / ОБУЧЕНИЕ МОДЕЛИ ИИ ======================
+from utils.ml_model import train_model, is_model_valid
+
+if not is_model_valid():
+    print(" Данные изменены или модель отсутствует. Обучаем модель заново...")
+    train_model()
+else:
+    print(" Модель ИИ загружена и актуальна")
+
 # Инициализация session_state
 if 'show_reset_confirm' not in st.session_state:
     st.session_state.show_reset_confirm = False
@@ -214,7 +224,7 @@ if role == "Эксперт":
 
         # === БЛОК ПОДТВЕРЖДЕНИЯ СБРОСА ===
         if st.session_state.get('show_reset_confirm', False):
-            st.warning(" Вы действительно хотите сбросить ВСЕ глобальные диапазоны и значения пород к исходным из курсовой? Это действие **нельзя отменить**.")
+            st.warning(" Вы действительно хотите сбросить ВСЕ глобальные диапазоны и значения пород к исходным? Это действие **нельзя отменить**.")
             
             col_yes, col_no = st.columns(2)
             with col_yes:
@@ -594,6 +604,36 @@ else:
                 st.subheader("Опровергнутые породы")
                 for breed, reason in st.session_state.refuted:
                     st.markdown(f"**{breed}** — {reason}")
+
+                # === БЛОК МОДЕЛИ ИИ ===
+        if st.session_state.get('show_result', False):
+            possible = st.session_state.possible
+            
+            # Показываем кнопку модели ИИ только если обычный поиск не дал однозначного результата
+            if len(possible) == 0 or len(possible) > 1:
+            # === КНОПКА И ВЫВОД МОДЕЛИ ИИ ===
+            # === КНОПКА И ВЫВОД МОДЕЛИ ИИ ===
+                st.divider()
+                st.subheader("Модель машинного обучения")
+                st.caption("Показывает топ-3 наиболее вероятных пород")
+                
+                if st.button("Запустить модель ИИ (топ-3)", type="primary", width="stretch"):
+                    from utils.ml_model import predict_top3
+                    
+                    top3, error_msg = predict_top3(st.session_state.user_input)
+                    
+                    if error_msg:
+                        st.error(error_msg)
+                    elif top3:
+                        st.success("**Модель ИИ рекомендует следующие породы:**")
+                        
+                        for breed, prob in top3:
+                            st.write(f"**{breed}** — **{prob}%**")
+                            st.progress(prob / 100)
+                        
+                        st.caption("Вероятности рассчитаны моделью Random Forest")
+                    else:
+                        st.warning("Не удалось получить предсказание от модели")
 
     with spec_tabs[1]:
         st.header("Просмотр базы знаний")
